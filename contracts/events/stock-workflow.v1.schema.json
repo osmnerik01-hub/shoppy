@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Commerce stock workflow v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "MessageId",
+    "Type",
+    "Version",
+    "OrderId",
+    "ProductId",
+    "Quantity",
+    "Accepted",
+    "Reason"
+  ],
+  "properties": {
+    "MessageId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "Type": {
+      "enum": [
+        "order.placed.v1",
+        "stock.completed.v1"
+      ]
+    },
+    "Version": {
+      "const": 1
+    },
+    "OrderId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "ProductId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "Quantity": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "Accepted": {
+      "type": "boolean"
+    },
+    "Reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

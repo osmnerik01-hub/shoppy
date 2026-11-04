@@ -1,0 +1,20 @@
+const {test,expect}=require('@playwright/test');
+const product={id:'11111111-1111-4111-8111-111111111111',name:'Test ürünü',description:'Tarayıcı test ürünü',price:10,currency:'TRY'};
+async function setup(page,status='Confirmed'){
+ let posts=0,keys=[];
+ await page.route('**/api/**',async route=>{const r=route.request(),url=new URL(r.url());let data;
+ if(url.pathname==='/api/products')data={items:[product],page:1,pageSize:12,totalCount:1};
+ else if(url.pathname.startsWith('/api/products/'))data=product;
+ else if(r.method()==='POST'){posts++;keys.push(r.headers()['idempotency-key']);expect(r.postDataJSON()).toEqual({productId:product.id,quantity:1});await new Promise(r=>setTimeout(r,150));data={id:'22222222-2222-4222-8222-222222222222',productId:product.id,quantity:1,unitPrice:12,currency:'TRY',status:'Pending'};}
+ else data={id:'22222222-2222-4222-8222-222222222222',productId:product.id,quantity:1,unitPrice:12,currency:'TRY',status};
+ await route.fulfill({json:data});});
+ await page.goto('/');return ()=>({posts,keys});
+}
+for(const status of ['Confirmed','Rejected'])test('alışveriş '+status,async({page},info)=>{
+ const calls=await setup(page,status);await page.getByRole('button',{name:'Ürünü incele'}).click();await page.getByRole('button',{name:'Sepete ekle'}).click();await page.getByRole('button',{name:'Sepet (1)',exact:true}).click();await expect(page.getByLabel('Adet')).toHaveValue('1');
+ await page.getByRole('button',{name:'Sipariş ver',exact:true}).dblclick();await expect(page.getByText(status==='Confirmed'?'Sipariş onaylandı.':'Stok yetersiz veya rezervasyon reddedildi. Sipariş oluşturulamadı.',{exact:true})).toBeVisible();await expect(page.getByText('Son tutar:')).toContainText('12,00');expect(calls().posts).toBe(1);expect(calls().keys[0]).toBeTruthy();
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();await page.screenshot({path:info.outputPath('result.png'),fullPage:true});await page.getByRole('button',{name:'Yeni alışveriş'}).click();await expect(page.getByRole('button',{name:'Sepet (0)',exact:true})).toBeVisible();
+});
+test('boş liste ve bağlantı hatası',async({page})=>{await page.route('**/api/products?*',r=>r.abort());await page.goto('/');await expect(page.getByRole('alert')).toContainText('bağlanılamadı');await page.route('**/api/products?*',r=>r.fulfill({json:{items:[],totalCount:0}}));await page.getByRole('button',{name:'Yeniden dene'}).click();await expect(page.getByText('Henüz ürün bulunmuyor.')).toBeVisible();});
+test('klavye, etiket ve mobil yerleşim',async({page},info)=>{await setup(page);await page.keyboard.press('Tab');await expect(page.getByText('İçeriğe geç')).toBeFocused();await page.screenshot({path:info.outputPath('catalog.png'),fullPage:true});await page.getByRole('button',{name:'Ürünü incele'}).click();await page.getByRole('button',{name:'Sepete ekle'}).click();await page.getByRole('button',{name:'Sepet (1)',exact:true}).click();await page.getByLabel('Adet').fill('0');await expect(page.getByRole('button',{name:'Sipariş ver',exact:true})).toBeDisabled();});
+test('yanıt kaybında aynı anahtar korunur',async({page})=>{let attempts=[];await setup(page);await page.route('**/api/orders',async r=>{attempts.push(r.request().headers()['idempotency-key']);if(attempts.length===1)return r.abort();await r.fulfill({status:202,json:{id:'22222222-2222-4222-8222-222222222222',productId:product.id,quantity:1,unitPrice:12,currency:'TRY',status:'Pending'}});});await page.getByRole('button',{name:'Ürünü incele'}).click();await page.getByRole('button',{name:'Sepete ekle'}).click();await page.getByRole('button',{name:'Sepet (1)',exact:true}).click();await page.getByRole('button',{name:'Sipariş ver',exact:true}).click();await expect(page.getByRole('alert')).toContainText('yanıtı alınamadı');await page.getByRole('button',{name:'Durumu yeniden sorgula'}).click();await expect(page.getByText('Sipariş onaylandı.',{exact:true})).toBeVisible();expect(attempts).toHaveLength(2);expect(attempts[0]).toBe(attempts[1]);});

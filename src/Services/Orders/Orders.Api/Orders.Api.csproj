@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <ItemGroup>
+    <ProjectReference Include="../../../Shared/Observability/Observability.csproj" />
+    <ProjectReference Include="../Orders.Application/Orders.Application.csproj" />
+    <ProjectReference Include="../Orders.Infrastructure/Orders.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

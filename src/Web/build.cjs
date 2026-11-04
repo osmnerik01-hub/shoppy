@@ -1,0 +1,1 @@
+const fs=require('node:fs'); const out='../Gateway/wwwroot'; fs.mkdirSync(out,{recursive:true}); for(const f of ['index.html','app.js','style.css']) fs.copyFileSync('src/'+f,out+'/'+f); fs.copyFileSync('node_modules/angular/angular.min.js',out+'/angular.min.js');

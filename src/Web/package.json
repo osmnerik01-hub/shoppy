@@ -1,0 +1,1 @@
+{"private":true,"scripts":{"build":"node build.cjs","test":"playwright test tests/unit tests/contracts","test:e2e":"playwright test tests/e2e"},"dependencies":{"angular":"1.8.3"},"devDependencies":{"@playwright/test":"1.58.2","yaml":"2.8.2"}}

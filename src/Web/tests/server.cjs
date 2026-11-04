@@ -1,0 +1,2 @@
+const http=require('node:http'),fs=require('node:fs'),path=require('node:path');
+http.createServer((req,res)=>{const name=req.url==='/'?'index.html':req.url.slice(1);const files={'index.html':'src/index.html','app.js':'src/app.js','style.css':'src/style.css','angular.min.js':'node_modules/angular/angular.min.js'};if(!files[name]){res.writeHead(404).end();return;}res.setHeader('Content-Type',name.endsWith('.js')?'text/javascript':name.endsWith('.css')?'text/css':'text/html');res.end(fs.readFileSync(path.resolve(files[name])));}).listen(5190,'127.0.0.1');

@@ -1,0 +1,11 @@
+**/bin/
+**/obj/
+*.db
+*.db-shm
+*.db-wal
+
+.tools/
+
+src/Web/node_modules/
+src/Web/test-results/
+src/Web/playwright-report/

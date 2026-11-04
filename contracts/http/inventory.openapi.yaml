@@ -1,0 +1,148 @@
+openapi: 3.0.3
+info:
+  title: Inventory API
+  version: 1.0.0
+  description: Inventory-owned SQLite database. Quantities are integers. Reservation ids are client-generated idempotency keys retained permanently. Replays return current persisted state; changed contents or conflicting terminal transitions return 409.
+servers:
+  - url: http://localhost:5102
+paths:
+  /stock/{productId}:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+    get:
+      responses:
+        '200':
+          description: Current stock
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Stock'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      description: Initialize stock once. Existing products return 409; this endpoint never overwrites stock.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quantity]
+              properties:
+                quantity: { type: integer, minimum: 0, maximum: 2147483647 }
+      responses:
+        '201':
+          description: Stock initialized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Stock'
+        '400':
+          $ref: '#/components/responses/Invalid'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /reservations/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ReservationId'
+    put:
+      description: Reserve stock atomically. Identical retries return persisted state, including after commit or release, without reserving again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [productId, quantity]
+              properties:
+                productId: { type: string, format: uuid }
+                quantity: { type: integer, minimum: 1, maximum: 2147483647 }
+      responses:
+        '200':
+          $ref: '#/components/responses/Reservation'
+        '400':
+          $ref: '#/components/responses/Invalid'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /reservations/{id}/commit:
+    parameters:
+      - $ref: '#/components/parameters/ReservationId'
+    post:
+      description: Deduct reserved units from physical stock once. Repeated commits succeed; released reservations return 409.
+      responses:
+        '200':
+          $ref: '#/components/responses/Reservation'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /reservations/{id}/release:
+    parameters:
+      - $ref: '#/components/parameters/ReservationId'
+    post:
+      description: Return reserved units to availability once. Repeated releases succeed; committed reservations return 409.
+      responses:
+        '200':
+          $ref: '#/components/responses/Reservation'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+components:
+  parameters:
+    ProductId:
+      name: productId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ReservationId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  schemas:
+    Stock:
+      type: object
+      required: [id, quantity, reserved, available]
+      properties:
+        id: { type: string, format: uuid }
+        quantity: { type: integer, minimum: 0 }
+        reserved: { type: integer, minimum: 0 }
+        available: { type: integer, minimum: 0 }
+    Reservation:
+      type: object
+      required: [id, productId, quantity, status]
+      properties:
+        id: { type: string, format: uuid }
+        productId: { type: string, format: uuid }
+        quantity: { type: integer, minimum: 1 }
+        status: { type: string, enum: [Reserved, Committed, Released] }
+    Problem:
+      type: object
+      properties:
+        title: { type: string }
+        status: { type: integer }
+  responses:
+    Reservation:
+      description: Current persisted reservation state
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Reservation'
+    Conflict:
+      description: Insufficient stock, unknown product during reservation, reused id with different contents, existing stock, or incompatible terminal state
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Invalid:
+      description: Invalid identity, quantity or JSON
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: Stock or reservation not found
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'

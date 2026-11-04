@@ -1,0 +1,60 @@
+openapi: 3.0.3
+info:
+  title: Orders API
+  version: 1.0.0
+paths:
+  /orders:
+    post:
+      summary: Create a single-product order using a catalog price snapshot
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 200 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [productId, quantity]
+              properties:
+                productId: { type: string, format: uuid }
+                quantity: { type: integer, minimum: 1 }
+      responses:
+        '202':
+          description: Pending order or replay; Location points to status endpoint
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '400': { description: Invalid request or missing key }
+        '404': { description: Product not found }
+        '409': { description: Key reused with different contents }
+        '503': { description: Catalog unavailable or invalid response }
+  /orders/{id}:
+    get:
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Current order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '404': { description: Unknown order }
+components:
+  schemas:
+    Order:
+      type: object
+      required: [id, productId, quantity, unitPrice, currency, status]
+      properties:
+        id: { type: string, format: uuid }
+        productId: { type: string, format: uuid }
+        quantity: { type: integer }
+        unitPrice: { type: number }
+        currency: { type: string, enum: [TRY, USD, EUR] }
+        status: { type: string, enum: [Pending, Confirmed, Rejected] }
+        rejectionReason: { type: string, nullable: true }

@@ -1,0 +1,13 @@
+# Sipariş–stok akışı
+
+Bu aşama tek ürün ve adet içeren siparişleri destekler. `POST :5103/orders` için `Idempotency-Key` başlığı ve `{ "productId": "...", "quantity": 2 }` gerekir. İstemci fiyatı dikkate alınmaz; katalogdan alınan fiyat/para birimi siparişe kopyalanır. Aynı anahtar ve içerik aynı siparişi, farklı içerik 409 döndürür. `GET /orders/{id}` durum sorgusudur.
+
+Sipariş ve `order.placed.v1` outbox satırı aynı SQLite transaction içinde yazılır. Pending, sonuç gelene kadar terminal değildir; zaman aşımıyla reddedilmez. Inventory, sipariş kimliğiyle rezervasyon oluşturup stok tüketimini ve Committed durumunu aynı transaction içinde tamamlar. Yetersiz stokta kalıcı olumsuz karar üretilir. `stock.completed.v1` sonucu Confirmed veya Rejected durumuna geçirir. Terminal durum değiştirilmez.
+
+Telafi: rezervasyon, stok azaltma, inbox, karar ve sonuç outbox yazımı atomiktir. Herhangi bir yazma başarısızlığında transaction hepsini geri alır; açık rezervasyon bırakılmaz. Bu nedenle servisler arası ayrıca release mesajı gerekmemektedir. Mesaj kesintisi siparişi reddetmez; kalıcı outbox tekrar denenir. Stok reddinde stok değişmez. Sonuç yayınlanamasa bile stok kararı ve outbox birlikte kalır. Manuel HTTP rezervasyonlarının ayrılmış miktarları korunur.
+
+RabbitMQ: `RabbitMQ__Uri=amqp://localhost:5672` ayarlayın (kimlik bilgilerini kaynak dosyalarına yazmayın). `scripts/start-local.ps1` mevcut katalog bağlantısıyla servisleri başlatır ve RabbitMQ ayarını devralır. RabbitMQ önceden çalışıyor olmalıdır. RabbitMQ Windows servisini kurup başlatın; [yerel kılavuzu](local-windows.md) izleyin. Çalıştırıcı bu aşamada RabbitMQ ayarı yoksa durur; test sunucuları mesaj taşımayı kapalı tutabilir.
+
+Durable direct exchange `commerce.v1`, durable kuyruklar `inventory.orders.v1` ve `orders.results.v1`; routing key olay türüdür. Her iki kuyruk yayınlamadan önce tanımlanır. Persistent mesajlar publisher confirmation sonrası gönderilmiş işaretlenir. ACK tüketici transaction commit sonrasındadır. Yeniden teslim inbox ile, farklı mesaj kimliğiyle yinelenen sipariş ise kalıcı stok kararıyla ayıklanır. Birden çok worker aynı outbox satırını yayınlayabilir; tüketici bunu güvenle ayıklar. Desteklenmeyen sürüm ACK almaz; operatör sözleşme/üreticiyi düzeltmelidir. Şema `contracts/events/stock-workflow.v1.schema.json` içindedir; JSON alanları PascalCase, HTTP alanları camelCase kullanır.
+
+Inventory başlangıcı eski yerel SQLite dosyasını silmeden yeni mesaj tablolarını ekler. Testler SQLite üzerinde kesinti, rollback, yinelenen teslim, stok reddi ve HTTP fiyat/idempotency davranışını doğrular. Gerçek RabbitMQ bağlantı testi ayrıca çalışan broker gerektirir.
