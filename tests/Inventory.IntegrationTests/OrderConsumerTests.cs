@@ -1,3 +1,7 @@
+using System.Net;
+using System.Net.Http.Json;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Inventory.Domain;
 using Inventory.Infrastructure;
 using Messaging;
@@ -7,6 +11,23 @@ using Xunit;
 public sealed class OrderConsumerTests {
  sealed class FailSave : SaveChangesInterceptor {
   public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData e, InterceptionResult<int> result, CancellationToken ct = default) => throw new IOException("simulated crash before outbox commit");
+ }
+ [Fact]
+ public async Task Http_consumer_commits_before_success_and_deduplicates() {
+  var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".db");
+  try {
+   await using var app = new WebApplicationFactory<Program>().WithWebHostBuilder(b => b.UseSetting("ConnectionStrings:Inventory", $"Data Source={path};Pooling=False"));
+   using var client = app.CreateClient();
+   var product = Guid.NewGuid();
+   Assert.Equal(HttpStatusCode.Created, (await client.PostAsJsonAsync($"/stock/{product}", new { quantity = 3 })).StatusCode);
+   var message = new StockEvent(Guid.NewGuid(), "order.placed.v1", 1, Guid.NewGuid(), product, 2);
+   Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/internal/messages", message with { Version = 2 })).StatusCode);
+   foreach (var m in new[] { message, message, message with { MessageId = Guid.NewGuid() } })
+    Assert.Equal(HttpStatusCode.NoContent, (await client.PostAsJsonAsync("/internal/messages", m)).StatusCode);
+   await using var db = new InventoryDbContext(new DbContextOptionsBuilder<InventoryDbContext>().UseSqlite($"Data Source={path};Pooling=False").Options);
+   Assert.Equal(1, (await db.StockItems.SingleAsync()).Quantity);
+   Assert.Single(await db.Outbox.ToListAsync());
+  } finally { File.Delete(path); }
  }
  [Fact]
  public async Task Failure_rolls_back_stock_and_retry_is_deduplicated() {

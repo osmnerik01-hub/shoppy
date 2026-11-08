@@ -31,7 +31,7 @@ public class HealthTests {
   } finally { File.Delete(path); }
  }
  [Fact]
- public async Task Missing_broker_prevents_orders_and_inventory_readiness() {
+ public async Task Orders_and_inventory_are_ready_without_broker() {
   var folder = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString()); Directory.CreateDirectory(folder);
   try {
    await using var orders = new WebApplicationFactory<OrdersApi::Program>().WithWebHostBuilder(b => { b.UseSetting("ConnectionStrings:Orders", "Data Source="+folder+"/o.db;Pooling=False"); });
@@ -39,7 +39,7 @@ public class HealthTests {
    foreach (var client in new[] { orders.CreateClient(), inventory.CreateClient() }) {
     using (client) {
      Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health/live")).StatusCode);
-     Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.GetAsync("/health/ready")).StatusCode);
+     Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health/ready")).StatusCode);
     }
    }
   } finally { Directory.Delete(folder, true); }

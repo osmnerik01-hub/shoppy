@@ -58,6 +58,22 @@ public class CatalogTests
             Assert.Equal(3, first.Items.Concat(second.Items).Select(p => p.Id).Distinct().Count());
             Assert.Empty((await client.GetFromJsonAsync<Page>("/products?page=10&pageSize=2"))!.Items);
             Assert.Equal(20, (await client.GetFromJsonAsync<Page>("/products"))!.PageSize);
+            foreach (var sort in new[] { "name", "name-desc", "price", "price-desc" }) {
+                var filtered = await client.GetFromJsonAsync<Page>("/products?search=persisted&currency=USD&minPrice=12&maxPrice=13&sort=" + sort + "&pageSize=1");
+                Assert.Equal(1, filtered!.TotalCount); Assert.Equal(id, Assert.Single(filtered.Items).Id);
+                Assert.Empty((await client.GetFromJsonAsync<Page>("/products?search=Persisted&currency=USD&sort=" + sort + "&pageSize=1&page=2"))!.Items);
+            }
+            foreach (var invalid in new[] { "currency=XYZ", "sort=invalid", "sort=price", "minPrice=1", "currency=USD&minPrice=-1", "currency=USD&minPrice=abc", "currency=USD&minPrice=20&maxPrice=1", "currency=USD&maxPrice=NaN", "sort=name&sort=price", "search=" + new string('x',201) })
+                await AssertProblem(client, "/products?" + invalid, HttpStatusCode.BadRequest);
+            await using (var db = new CatalogDbContext(options)) {
+                db.Products.AddRange(new Product("Tie", "tie", 15m, "USD"), new Product("Tie", "tie", 15m, "USD")); await db.SaveChangesAsync();
+            }
+            foreach (var sort in new[] { "name", "name-desc", "price", "price-desc" }) {
+                var a = await client.GetFromJsonAsync<Page>("/products?search=Tie&currency=USD&sort="+sort+"&pageSize=1");
+                var b = await client.GetFromJsonAsync<Page>("/products?search=Tie&currency=USD&sort="+sort+"&pageSize=1&page=2");
+                Assert.Equal(2,a!.TotalCount); Assert.Equal(2,b!.TotalCount);
+                Assert.True(a.Items[0].Id.CompareTo(b.Items[0].Id)<0);
+            }
             var detail = await client.GetFromJsonAsync<Item>($"/products/{id}"); Assert.Equal("Test", detail!.Name);
             foreach (var url in new[] { "/products?page=0", "/products?pageSize=101", "/products?pageSize=0", "/products?page=abc", "/products?page=2147483647&pageSize=100", "/products/no-guid" })
                 await AssertProblem(client, url, HttpStatusCode.BadRequest);

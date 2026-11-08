@@ -7,12 +7,11 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddProblemDetails();
 builder.AddObservability("Orders");
 builder.AddDatabaseReadiness<OrdersDbContext>();
-builder.AddBrokerReadiness();
 builder.Services.AddDbContext<OrdersDbContext>(o => o.UseSqlite(builder.Configuration.GetConnectionString("Orders") ?? "Data Source=orders.db;Default Timeout=30"));
 builder.Services.AddHttpClient("catalog", c => { c.BaseAddress = new Uri(builder.Configuration["Catalog:Url"] ?? "http://localhost:5101"); c.Timeout = TimeSpan.FromSeconds(3); }).AddHttpMessageHandler<CorrelationHandler>();
 builder.Services.AddScoped<IMessageHandler, OrderResults>();
-if (builder.Configuration["RabbitMQ:Uri"] is string uri)
- builder.Services.AddHostedService(s => new BrokerWorker<OrdersDbContext>(s.GetRequiredService<IServiceScopeFactory>(), uri, "orders.results.v1", s.GetRequiredService<ILogger<BrokerWorker<OrdersDbContext>>>()));
+builder.Services.AddHttpClient("delivery", c => { c.BaseAddress = new Uri(builder.Configuration["Inventory:Url"] ?? "http://localhost:5102"); c.Timeout = TimeSpan.FromSeconds(5); }).AddHttpMessageHandler<CorrelationHandler>();
+builder.Services.AddHostedService<Messaging.HttpDeliveryWorker<OrdersDbContext>>();
 var app = builder.Build();
 app.UseObservability();
 app.UseExceptionHandler();
@@ -43,6 +42,11 @@ app.MapPost("/orders", async (CreateOrder request, HttpContext http, OrdersDbCon
  db.Enqueue(new(Guid.NewGuid(), "order.placed.v1", 1, order.Id, order.ProductId, order.Quantity));
  await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
  return Results.Accepted($"/orders/{order.Id}", order);
+});
+// Internal service endpoint: expose only on the trusted local service network.
+app.MapPost("/internal/messages", async (Messaging.StockEvent message, Messaging.IMessageHandler handler, CancellationToken ct) => {
+ try { await handler.Handle(message, ct); return Results.NoContent(); }
+ catch (InvalidOperationException) { return Results.BadRequest(); }
 });
 app.Run();
 public record CreateOrder(Guid ProductId, int Quantity);

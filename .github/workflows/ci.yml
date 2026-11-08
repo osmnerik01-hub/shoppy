@@ -12,12 +12,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Verify with native PostgreSQL and RabbitMQ
+      - name: Verify with native PostgreSQL
         shell: powershell
         env:
           CATALOG_TEST_POSTGRES: ${{ secrets.CATALOG_TEST_POSTGRES }}
           ConnectionStrings__Catalog: ${{ secrets.CATALOG_CONNECTION_STRING }}
-          RabbitMQ__Uri: ${{ secrets.RABBITMQ_URI }}
         run: ./scripts/verify.ps1 -System
       - uses: actions/upload-artifact@v4
         if: always()

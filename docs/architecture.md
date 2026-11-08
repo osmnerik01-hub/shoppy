@@ -1,6 +1,5 @@
-# Mimari temel
+﻿# Mimari temel
 
-Bu aşama .NET 10 LTS üzerinde bağımsız derlenebilir ve dağıtılabilir üç ASP.NET Core servisinin temelini kurar. Paket sürümleri Directory.Packages.props, ortak derleme ayarları Directory.Build.props içinde tutulur. AngularJS arayüzü Gateway üzerinden sunulur; servisler HTTP ve RabbitMQ ile haberleşir.
 
 ## Sahiplik ve veri sınırları
 
@@ -14,10 +13,18 @@ Her servis kendi Domain, Application, Infrastructure ve Api projelerine sahiptir
 
 Servisler başka servisin projesini, DbContext'ini, tablolarını, bağlantı bilgisini veya migration'larını paylaşamaz. Ürün kimliği diğer servislerde yalnızca bir dış kimliktir; servisler arası foreign key ve join yoktur. İleride iletişim sürümlenmiş HTTP sözleşmeleri veya olaylarla yapılır; ortak domain modeli paylaşılmaz. Her servis kendi veritabanı kimlik bilgilerini ve migration yaşam döngüsünü yönetir. Üretimde veritabanı erişim izinleri de bu ayrımı uygulamalıdır; kaynak mimari testleri çalışma zamanı SQL erişim yetkilerinin yerine geçmez.
 
-Catalog PostgreSQL kullanır. Inventory ve Orders ayrı SQLite dosyalarında EnsureCreated ile kendi tablolarını oluşturur. Orders fiyatı Catalog HTTP API'sinden alır, siparişi ve outbox kaydını aynı transaction içinde yazar. RabbitMQ üzerinden Inventory'ye ulaşan sipariş atomik stok kontrolü ve inbox ile işlenir; sonuç Orders'a outbox üzerinden iletilir. Tekrarlar ikinci stok düşümüne yol açmaz. Kesintide iş Pending kalır ve servisler geri geldiğinde yeniden denenir.
 
 ## Yerel çalışma
 
-Güncel bağlantılar ve kurulum [Windows kılavuzunda](local-windows.md). `scripts/start-local.ps1` Web'i derler; Catalog, Inventory, Orders ve Gateway süreçlerini başlatır. Arayüz http://localhost:5100 adresindedir. Ctrl+C başlatılan süreçleri durdurur. PostgreSQL/RabbitMQ ayrı Windows servisleridir. Inventory/Orders ayrı SQLite dosyalarını `artifacts/local/data` altında tutar. Her API `/health/live` ve `/health/ready` sunar.
 
 `./scripts/verify.ps1` derleme, .NET ve Web testlerini; `-System` gerçek yerel sistem ve kesinti kontrollerini çalıştırır. Architecture.Tests katman/veri sınırlarını denetler. İsteğe bağlı iz aktarımı [Gateway](gateway.md) belgesindedir.
+
+Current HTTP delivery configuration: .NET 10 SDK (global.json), Node.js 24/npm and PostgreSQL 17+ are required. SQLite needs no service. Set ConnectionStrings__Catalog to your PostgreSQL connection; retain schema migration permissions. Run scripts/start-local.ps1 or scripts/start-existing-local.cmd for the existing data profile. SDK/Node, PostgreSQL reachability, occupied ports and existing SQLite file checks remain enabled.
+
+Orders uses Inventory__Url (default http://localhost:5102); Inventory uses Orders__Url (default http://localhost:5103). The launcher supplies the selected ports. Workers POST persisted Outbox payloads to /internal/messages with a 5 second timeout and retry every second. Sent is written only after successful consumer completion. Inbox and persistent order decisions prevent a second stock effect, including lost HTTP responses and process restarts. Unsupported event versions receive 400 and remain pending for operator correction. Internal endpoints must stay on the trusted service network; Gateway does not publish them.
+
+HTTP teslimatı için .NET 10 SDK (global.json), Node.js 24/npm ve PostgreSQL 17+ gerekir. SQLite ayrı servis gerektirmez. `ConnectionStrings__Catalog` bağlantısını ve migration yetkilerini ayarlayın. `scripts/start-local.ps1` veya mevcut veriler için `scripts/start-existing-local.cmd` çalıştırılır. SDK/Node, PostgreSQL, port ve mevcut SQLite dosyası kontrolleri korunur. Varsayılan arayüz http://localhost:5100 adresindedir; Ctrl+C uygulama süreçlerini kapatır.
+
+Orders, `Inventory__Url` (varsayılan http://localhost:5102); Inventory, `Orders__Url` (varsayılan http://localhost:5103) kullanır. Başlatıcı seçilen portları aktarır. Worker kalıcı Outbox içeriğini `/internal/messages` ucuna POST eder; HTTP zaman aşımı 5 saniye, yeniden deneme aralığı 1 saniyedir. Sent yalnızca tüketici işlemi tamamlanıp başarılı yanıt alındıktan sonra yazılır. Inbox ve kalıcı sipariş kararları tekrar teslimatta, yanıt kaybında ve süreç yeniden başladığında ikinci stok etkisini engeller. Desteklenmeyen olay/sürüm 400 alır ve operatör sözleşmeyi düzeltene kadar bekler. İç uçlar güvenilir servis ağında tutulmalıdır; Gateway bunları yayınlamaz.
+
+RabbitMQ artık gerekli değildir. Servisine ve eski kuyruklarına dokunulmaz. Yalnızca eski broker kuyruğunda kalan mesajlar otomatik taşınmaz. Sent=false Outbox kayıtları HTTP ile gönderilir; Sent=true kayıtlar yeniden açılmaz. SQLite ve PostgreSQL verileri korunur. `scripts/control-local.ps1` inventory/orders yeniden başlatma ve shutdown işlemlerini destekler. CI yalnızca `CATALOG_TEST_POSTGRES` ve `CATALOG_CONNECTION_STRING` bağlantı sırlarını gerektirir; broker CLI veya URI/vhost ayarı gerekmez. Sistem kontrolleri Inventory kesintisini ve Orders yeniden başlatmasını kapsar.

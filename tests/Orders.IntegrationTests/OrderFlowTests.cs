@@ -40,7 +40,7 @@ public sealed class OrderFlowTests {
    var io = new DbContextOptionsBuilder<InventoryDbContext>().UseSqlite(ic).Options;
    await using (var db = new OrdersDbContext(oo)) {
     Assert.Single(await db.Outbox.ToListAsync());
-    await Assert.ThrowsAsync<IOException>(() => OutboxDispatch.Send(db, _ => throw new IOException("broker unavailable")));
+    await Assert.ThrowsAsync<IOException>(() => OutboxDispatch.Send(db, _ => throw new IOException("HTTP consumer unavailable")));
    }
    StockEvent placed;
    await using (var db = new OrdersDbContext(oo)) { Assert.False((await db.Outbox.SingleAsync()).Sent); placed = JsonSerializer.Deserialize<StockEvent>((await db.Outbox.SingleAsync()).Payload)!; }
@@ -52,7 +52,8 @@ public sealed class OrderFlowTests {
     Assert.Equal(status == "Confirmed" ? 1 : 0, await db.Reservations.CountAsync());
     result = JsonSerializer.Deserialize<StockEvent>((await db.Outbox.SingleAsync()).Payload)!;
    }
-   for (int i = 0; i < 2; i++) { await using var db = new OrdersDbContext(oo); await new OrderResults(db).Handle(result, default); }
+   Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/internal/messages", result with { Version = 2 })).StatusCode);
+   for (int i = 0; i < 2; i++) Assert.Equal(HttpStatusCode.NoContent, (await client.PostAsJsonAsync("/internal/messages", result)).StatusCode);
    await using (var db = new OrdersDbContext(oo)) { Assert.Equal(status, (await db.Orders.SingleAsync()).Status); Assert.Single(await db.Inbox.ToListAsync()); }
    await using (var db = new OrdersDbContext(oo)) { await OutboxDispatch.Send(db, _ => Task.CompletedTask); Assert.True((await db.Outbox.SingleAsync()).Sent); }
   } finally { Directory.Delete(folder, true); }

@@ -6,7 +6,8 @@ param(
     [ValidateRange(1,65535)][int]$OrdersPort = 5103,
     [ValidateRange(5,600)][int]$StartupTimeoutSeconds = 90,
     [switch]$StopAfterReady,
-    [string]$ControlDirectory
+    [string]$ControlDirectory,
+    [switch]$UseExistingData
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -14,6 +15,7 @@ $processes = @()
 $services = @{}
 $stopped = @{}
 $savedEnvironment = @{}
+$controlRegistered = $false
 function Set-LocalEnvironment($Name, $Value) {
     if (!$savedEnvironment.ContainsKey($Name)) { $savedEnvironment[$Name] = [Environment]::GetEnvironmentVariable($Name, 'Process') }
     [Environment]::SetEnvironmentVariable($Name, $Value, 'Process')
@@ -34,7 +36,7 @@ function Start-LocalService($Name, $Directory, $Port, $Health = 'ready') {
         } catch { }
         Start-Sleep -Milliseconds 500
     } while ([DateTime]::UtcNow -lt $deadline)
-    throw "$Name hazır olmadı. Veritabanı bağlantısı/yetkileri ve RabbitMQ kullanıcı/vhost izinlerini kontrol edin. Loglar: $outLog ve $errLog"
+    throw "$Name hazir olmadi. Veritabani baglantisini ve servis loglarini kontrol edin: $outLog ve $errLog"
 }
 Push-Location $root
 try {
@@ -48,9 +50,6 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'global.json ile uyumlu .NET 10 SDK kurulmalıdır.' }
     if (!(Get-Command node -ErrorAction SilentlyContinue) -or !(Get-Command npm.cmd -ErrorAction SilentlyContinue)) { throw 'Node.js ve npm kurulmalı ve PATH içinde bulunmalıdır (önerilen Node.js 24 LTS).' }
     if ([string]::IsNullOrWhiteSpace($env:ConnectionStrings__Catalog)) { throw 'ConnectionStrings__Catalog PostgreSQL bağlantısını ayarlayın. docs/local-windows.md belgesine bakın.' }
-    if ([string]::IsNullOrWhiteSpace($env:RabbitMQ__Uri)) { throw 'RabbitMQ__Uri bağlantısını ayarlayın (amqp://kullanici:parola@localhost:5672/).' }
-    $brokerUri = $null
-    if (![Uri]::TryCreate($env:RabbitMQ__Uri, [UriKind]::Absolute, [ref]$brokerUri) -or $brokerUri.Scheme -notin @('amqp','amqps')) { throw 'RabbitMQ__Uri geçerli bir amqp/amqps adresi olmalıdır.' }
     # Validate service reachability before installing packages/building. Authentication
     # and schema access are checked by migrations and readiness below.
     $pg = New-Object System.Data.Common.DbConnectionStringBuilder
@@ -59,9 +58,7 @@ try {
     foreach ($key in @('Host','Server')) { if ($pg.ContainsKey($key)) { $pgHost = [string]$pg[$key]; break } }
     $pgPort = 5432
     if ($pg.ContainsKey('Port')) { $pgPort = [int]$pg['Port'] }
-    $brokerPort = $brokerUri.Port
-    if ($brokerPort -lt 1) { if ($brokerUri.Scheme -eq 'amqps') { $brokerPort = 5671 } else { $brokerPort = 5672 } }
-    foreach ($dependency in @(@('PostgreSQL', $pgHost, $pgPort), @('RabbitMQ', $brokerUri.Host, $brokerPort))) {
+    foreach ($dependency in @(,@('PostgreSQL', $pgHost, $pgPort))) {
         $tcp = New-Object System.Net.Sockets.TcpClient
         try {
             $task = $tcp.ConnectAsync([string]$dependency[1], [int]$dependency[2])
@@ -69,21 +66,36 @@ try {
         } catch { throw "$($dependency[0]) erişilemiyor. Windows servisini, bağlantı adresini ve portunu kontrol edin." }
         finally { $tcp.Dispose() }
     }
+    # Release the previous controlled run's DLLs before any build begins.
+    if ($ControlDirectory -and (Test-Path (Join-Path $ControlDirectory 'ready'))) {
+        Write-Host "Aynı kontrol dizinindeki mevcut kontrollü oturum kapatılıp yeniden başlatılacak: $ControlDirectory"
+        & "$PSScriptRoot/control-local.ps1" -Action shutdown -ControlDirectory $ControlDirectory
+    }
     $ports = @($GatewayPort, $CatalogPort, $InventoryPort, $OrdersPort)
     if (@($ports | Select-Object -Unique).Count -ne 4) { throw 'Uygulama portları birbirinden farklı olmalıdır.' }
     foreach ($port in $ports) {
-        if (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) { throw "Port kullanımda: $port" }
+        if (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) { throw "Port kullanımda: $port. İlgisiz süreçleri kapatmayın; boş bir port seçin veya mevcut kontrollü oturumun ControlDirectory değerini kullanın." }
     }
-    $dataDirectory = Join-Path $root 'artifacts/local/data'
+    if ($UseExistingData) {
+        foreach ($entry in @(@('Inventory','inventory.db'), @('Orders','orders.db'))) {
+            $path = Join-Path $root ("artifacts/revision-data/" + $entry[1])
+            if (!(Test-Path -LiteralPath $path -PathType Leaf)) { throw "Mevcut veritabanı dosyası bulunamadı; doğru veri yolunu geri yükleyin: $path" }
+            Set-LocalEnvironment ("ConnectionStrings__" + $entry[0]) "Data Source=$path;Mode=ReadWrite;Default Timeout=30"
+        }
+        Set-LocalEnvironment 'Inventory__SeedDemo' 'false'
+    }
+    $dataDirectory = Join-Path $root 'artifacts/local/data' 
     $logDirectory = Join-Path $root ('artifacts/local/logs/' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Force $dataDirectory, $logDirectory | Out-Null
     if (!$env:ConnectionStrings__Inventory) { Set-LocalEnvironment 'ConnectionStrings__Inventory' "Data Source=$dataDirectory/inventory.db;Default Timeout=30" }
     if (!$env:ConnectionStrings__Orders) { Set-LocalEnvironment 'ConnectionStrings__Orders' "Data Source=$dataDirectory/orders.db;Default Timeout=30" }
     Set-LocalEnvironment 'Catalog__ApplyMigrations' 'true'
     if (!$env:Inventory__SeedDemo) { Set-LocalEnvironment 'Inventory__SeedDemo' 'true' }
-    Set-LocalEnvironment 'Catalog__Url' "http://localhost:$CatalogPort"
-    Set-LocalEnvironment 'ReverseProxy__Clusters__catalog__Destinations__primary__Address' "http://localhost:$CatalogPort/"
-    Set-LocalEnvironment 'ReverseProxy__Clusters__orders__Destinations__primary__Address' "http://localhost:$OrdersPort/"
+    Set-LocalEnvironment 'Inventory__Url' "http://127.0.0.1:$InventoryPort"
+    Set-LocalEnvironment 'Orders__Url' "http://127.0.0.1:$OrdersPort"
+    Set-LocalEnvironment 'Catalog__Url' "http://127.0.0.1:$CatalogPort"
+    Set-LocalEnvironment 'ReverseProxy__Clusters__catalog__Destinations__primary__Address' "http://127.0.0.1:$CatalogPort/"
+    Set-LocalEnvironment 'ReverseProxy__Clusters__orders__Destinations__primary__Address' "http://127.0.0.1:$OrdersPort/"
     Push-Location (Join-Path $root 'src/Web')
     try {
         & npm.cmd ci
@@ -97,11 +109,20 @@ try {
     Start-LocalService 'Inventory.Api' (Join-Path $root 'src/Services/Inventory/Inventory.Api') $InventoryPort
     Start-LocalService 'Orders.Api' (Join-Path $root 'src/Services/Orders/Orders.Api') $OrdersPort
     Start-LocalService 'Gateway' (Join-Path $root 'src/Gateway') $GatewayPort
-    Write-Host "Arayüz: http://localhost:$GatewayPort. Loglar: $logDirectory. Durdurmak için Ctrl+C."
+    foreach ($route in @('/', '/api/products')) {
+        try {
+            $page = Invoke-WebRequest "http://localhost:$GatewayPort$route" -UseBasicParsing -TimeoutSec 10
+            if ($page.StatusCode -ne 200) { throw "HTTP $($page.StatusCode)" }
+            if ($route -eq '/' -and $page.Headers['Content-Type'] -notmatch 'text/html') { throw 'HTML arayüzü alınamadı' }
+            if ($route -eq '/api/products') { $null = $page.Content | ConvertFrom-Json }
+        } catch { throw "Gateway $route doğrulanamadı. Gateway/Catalog loglarını ve Web derlemesini kontrol edin: $($_.Exception.Message)" }
+    }
+    Write-Host "Doğrulanmış arayüz: http://localhost:$GatewayPort. Loglar: $logDirectory. Durdurmak için Ctrl+C."
     if ($ControlDirectory) {
         $ControlDirectory = [IO.Path]::GetFullPath($ControlDirectory)
         New-Item -ItemType Directory -Force $ControlDirectory | Out-Null
         Set-Content (Join-Path $ControlDirectory 'ready') $PID
+        $controlRegistered = $true
     }
     if (!$StopAfterReady) {
         while ($true) {
@@ -112,11 +133,6 @@ try {
                 try {
                     if ($request.action -eq 'shutdown') { break }
                     foreach ($name in $request.services) {
-                        if ($name -eq 'rabbitmq') {
-                            if ($request.action -in @('stop','restart')) { & rabbitmqctl.bat stop_app; if ($LASTEXITCODE) { throw 'RabbitMQ stop_app failed' } }
-                            if ($request.action -in @('start','restart')) { & rabbitmqctl.bat start_app; if ($LASTEXITCODE) { throw 'RabbitMQ start_app failed' } }
-                            continue
-                        }
                         $dllName = @{ inventory='Inventory.Api'; orders='Orders.Api' }[$name]
                         if (!$dllName) { throw "Unknown service: $name" }
                         $service = $services[$dllName]
@@ -134,12 +150,16 @@ try {
         }
     }
 } finally {
-    if ($ControlDirectory) { Remove-Item -LiteralPath (Join-Path $ControlDirectory 'ready') -ErrorAction SilentlyContinue }
     foreach ($child in $processes) {
-        if (!$child.HasExited) { Stop-Process -Id $child.Id -ErrorAction SilentlyContinue; $child.WaitForExit(5000) | Out-Null }
+        if (!$child.HasExited) {
+            Stop-Process -Id $child.Id -ErrorAction SilentlyContinue
+            if (!$child.WaitForExit(30000)) { throw "Application did not exit: $($child.Id). Rebuild is unsafe." }
+        }
         $child.Dispose()
     }
+    if ($controlRegistered) { Remove-Item -LiteralPath (Join-Path $ControlDirectory 'ready') -ErrorAction SilentlyContinue }
     foreach ($name in $savedEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process') }
     Pop-Location
 }
+
 

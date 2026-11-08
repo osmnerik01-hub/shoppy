@@ -7,7 +7,6 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
-using RabbitMQ.Client;
 namespace Observability;
 public static class ServiceDefaults {
  public static void AddObservability(this WebApplicationBuilder builder, string name) {
@@ -25,14 +24,6 @@ public static class ServiceDefaults {
  }
  public static void AddDatabaseReadiness<T>(this WebApplicationBuilder builder) where T : DbContext {
   builder.Services.AddHealthChecks().AddCheck<DatabaseCheck<T>>("database", tags: ["ready"], timeout: TimeSpan.FromSeconds(2));
- }
- public static void AddBrokerReadiness(this WebApplicationBuilder builder) {
-  var uri = builder.Configuration["RabbitMQ:Uri"];
-  builder.Services.AddHealthChecks().AddAsyncCheck("broker", async ct => {
-   if (string.IsNullOrWhiteSpace(uri)) return HealthCheckResult.Unhealthy("Broker is not configured");
-   await using var connection = await new ConnectionFactory { Uri = new Uri(uri), RequestedConnectionTimeout = TimeSpan.FromSeconds(2) }.CreateConnectionAsync(ct);
-   return connection.IsOpen ? HealthCheckResult.Healthy() : HealthCheckResult.Unhealthy();
-  }, tags: ["ready"], timeout: TimeSpan.FromSeconds(3));
  }
  public static void UseObservability(this WebApplication app) {
   app.Use(async (context, next) => {

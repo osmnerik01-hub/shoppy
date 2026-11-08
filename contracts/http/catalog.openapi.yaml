@@ -27,9 +27,65 @@
               "maximum": 100,
               "default": 20
             }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            }
+          },
+          {
+            "name": "currency",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "TRY",
+                "USD",
+                "EUR"
+              ]
+            }
+          },
+          {
+            "name": "minPrice",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 9999999999.99
+            }
+          },
+          {
+            "name": "maxPrice",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 9999999999.99
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "name",
+                "name-desc",
+                "price",
+                "price-desc"
+              ]
+            }
           }
         ],
-        "description": "Ordered by id ascending. Offset must fit Int32. Pages beyond the end return empty items. Count and items may reflect concurrent changes.",
+        "description": "Filters precede pagination; totalCount is filtered. Default id order; other orders break ties by id. Price filters/sorts require currency. minPrice <= maxPrice. Literal case-insensitive name/description search (max 200 characters).",
         "responses": {
           "200": {
             "description": "Success",

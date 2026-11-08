@@ -25,7 +25,23 @@ app.MapGet("/products", async (HttpContext context, IProductRepository repositor
         (query.ContainsKey("pageSize") && !int.TryParse(query["pageSize"], out size)) ||
         page < 1 || size is < 1 or > 100 || (long)(page - 1) * size > int.MaxValue)
         return Results.Problem(statusCode: 400, title: "Invalid pagination", detail: "page >= 1, pageSize between 1 and 100; offset must fit Int32.");
-    return Results.Ok(await repository.ListAsync(page, size, ct));
+    string? search = query.ContainsKey("search") ? query["search"].ToString().Trim() : null;
+    string? currency = query.ContainsKey("currency") ? query["currency"].ToString() : null;
+    string? sort = query.ContainsKey("sort") ? query["sort"].ToString() : null;
+    decimal? min = null, max = null;
+    foreach (var key in new[] { "search", "currency", "sort", "minPrice", "maxPrice", "page", "pageSize" })
+        if (query[key].Count > 1) return Results.Problem(statusCode: 400, title: "Invalid parameter", detail: key + " must occur once.");
+    foreach (var key in new[] { "minPrice", "maxPrice" }) {
+        if (!query.ContainsKey(key)) continue;
+        if (!decimal.TryParse(query[key], System.Globalization.NumberStyles.AllowDecimalPoint, System.Globalization.CultureInfo.InvariantCulture, out var value) || value < 0 || value > 9999999999.99m)
+            return Results.Problem(statusCode: 400, title: "Invalid price", detail: key + " must be a number between 0 and 9999999999.99 using a decimal point.");
+        if (key == "minPrice") min = value; else max = value;
+    }
+    if (search?.Length > 200 || (currency is not null && currency is not ("TRY" or "USD" or "EUR")) ||
+        (sort is not null && sort is not ("name" or "name-desc" or "price" or "price-desc")) || min > max ||
+        (currency is null && (min is not null || max is not null || sort is "price" or "price-desc")))
+        return Results.Problem(statusCode: 400, title: "Invalid catalog filters", detail: "search: at most 200 characters; currency: TRY/USD/EUR; sort: name/name-desc/price/price-desc. Price filters and sorting require currency; minPrice must not exceed maxPrice.");
+    return Results.Ok(await repository.ListAsync(page, size, ct, new(search, currency, min, max, sort)));
 });
 app.MapGet("/products/{id}", async (string id, IProductRepository repository, CancellationToken ct) =>
 {

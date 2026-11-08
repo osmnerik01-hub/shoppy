@@ -22,3 +22,5 @@ dotnet test tests/Inventory.IntegrationTests
 ```
 
 Entegrasyon testleri gerçek dosya tabanlı SQLite ve aynı dosyayı kullanan iki bağımsız ASP.NET Core host üzerinde çalışır. Son stok yarışı, eşzamanlı aynı kimlik, yetersiz stok, değişen içerik, eşzamanlı/tekrarlı kesinleştirme ve bırakma, karşıt son durum yarışı ve doğrudan SQL kısıtı doğrulanır. Her kontrol yeni DbContext ile kalıcı durumu okur.
+
+Order events use POST /internal/messages. Stock, Inbox, OrderDecisions and result Outbox commit before HTTP 204. Results retry through Orders__Url. Legacy broker-only messages are not migrated; queues are untouched.

@@ -18,15 +18,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'global.json ile uyumlu .NET 10 SDK kurulmalıdır.' }
     dotnet build Project1.sln
     if ($LASTEXITCODE -ne 0) { throw 'Derleme başarısız.' }
-    # Integration fixtures manage their own broker settings; do not inherit the app URI.
-    $previousRabbitMqUri = $env:RabbitMQ__Uri
-    try {
-        Remove-Item Env:RabbitMQ__Uri -ErrorAction SilentlyContinue
-        dotnet test Project1.sln --no-build --logger trx --results-directory artifacts/dotnet
-        if ($LASTEXITCODE -ne 0) { throw 'Testler başarısız.' }
-    } finally {
-        $env:RabbitMQ__Uri = $previousRabbitMqUri
-    }
+    dotnet test Project1.sln --no-build --logger trx --results-directory artifacts/dotnet
+    if ($LASTEXITCODE -ne 0) { throw 'Tests failed.' }
     Push-Location (Join-Path $root 'src/Web')
     try {
         foreach ($arguments in @(@('ci'), @('run','build'), @('exec','playwright','install','chromium'), @('test'), @('run','test:e2e'))) {
@@ -35,7 +28,6 @@ try {
         }
     } finally { Pop-Location }
     if ($System) {
-        if (!(Get-Command rabbitmqctl.bat -ErrorAction SilentlyContinue)) { throw 'RabbitMQ sbin must be on PATH; run as the RabbitMQ node owner with its Erlang cookie.' }
         $env:LOCAL_CONTROL_DIRECTORY = Join-Path $root ('artifacts/local/control/' + [Guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Force $env:LOCAL_CONTROL_DIRECTORY | Out-Null
         $launcher = Start-Process powershell.exe -WindowStyle Hidden -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File', "`"$root/scripts/start-local.ps1`"", '-ControlDirectory', "`"$env:LOCAL_CONTROL_DIRECTORY`"") -RedirectStandardOutput (Join-Path $env:LOCAL_CONTROL_DIRECTORY 'launcher.out.log') -RedirectStandardError (Join-Path $env:LOCAL_CONTROL_DIRECTORY 'launcher.err.log') -PassThru
@@ -54,14 +46,14 @@ try {
 }
 finally {
     if ($launcher -and !$launcher.HasExited -and (Test-Path (Join-Path $env:LOCAL_CONTROL_DIRECTORY 'ready'))) {
-        try { & "$PSScriptRoot/control-local.ps1" -Action start -Services rabbitmq }
-        finally {
+        try {
             & "$PSScriptRoot/control-local.ps1" -Action shutdown
             if (!$launcher.WaitForExit(15000)) { Write-Warning 'Launcher did not stop; inspect local logs.' }
-        }
+        } finally { $launcher.Dispose() }
     }
     $env:LOCAL_CONTROL_DIRECTORY = $previousControl
     $env:PATH = $originalPath
     $env:DOTNET_ROOT = $originalDotnetRoot
     Pop-Location
 }
+

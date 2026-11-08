@@ -7,13 +7,12 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddProblemDetails();
 builder.AddObservability("Inventory");
 builder.AddDatabaseReadiness<InventoryDbContext>();
-builder.AddBrokerReadiness();
 builder.Services.AddDbContext<InventoryDbContext>(o => o.UseSqlite(
     builder.Configuration.GetConnectionString("Inventory") ?? "Data Source=inventory.db;Default Timeout=30"));
 builder.Services.AddScoped<IInventoryService, InventoryService>();
 builder.Services.AddScoped<Messaging.IMessageHandler, OrderConsumer>();
-if (builder.Configuration["RabbitMQ:Uri"] is string uri)
- builder.Services.AddHostedService(s => new Messaging.BrokerWorker<InventoryDbContext>(s.GetRequiredService<IServiceScopeFactory>(), uri, "inventory.orders.v1", s.GetRequiredService<ILogger<Messaging.BrokerWorker<InventoryDbContext>>>()));
+builder.Services.AddHttpClient("delivery", c => { c.BaseAddress = new Uri(builder.Configuration["Orders:Url"] ?? "http://localhost:5103"); c.Timeout = TimeSpan.FromSeconds(5); }).AddHttpMessageHandler<CorrelationHandler>();
+builder.Services.AddHostedService<Messaging.HttpDeliveryWorker<InventoryDbContext>>();
 var app = builder.Build();
 app.UseObservability();
 app.UseExceptionHandler();
@@ -40,6 +39,11 @@ app.MapPost("/stock/{productId:guid}", async (Guid productId, StockRequest reque
 app.MapPut("/reservations/{id:guid}", async (Guid id, ReserveRequest request, IInventoryService s, CancellationToken ct) => Respond(await s.Reserve(id, request.ProductId, request.Quantity, ct)));
 app.MapPost("/reservations/{id:guid}/commit", async (Guid id, IInventoryService s, CancellationToken ct) => Respond(await s.Complete(id, true, ct)));
 app.MapPost("/reservations/{id:guid}/release", async (Guid id, IInventoryService s, CancellationToken ct) => Respond(await s.Complete(id, false, ct)));
+// Internal service endpoint: expose only on the trusted local service network.
+app.MapPost("/internal/messages", async (Messaging.StockEvent message, Messaging.IMessageHandler handler, CancellationToken ct) => {
+ try { await handler.Handle(message, ct); return Results.NoContent(); }
+ catch (InvalidOperationException) { return Results.BadRequest(); }
+});
 app.Run();
 public record StockRequest(int Quantity);
 public record ReserveRequest(Guid ProductId, int Quantity);
