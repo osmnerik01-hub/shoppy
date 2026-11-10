@@ -28,8 +28,12 @@ app.MapGet("/products", async (HttpContext context, IProductRepository repositor
     string? search = query.ContainsKey("search") ? query["search"].ToString().Trim() : null;
     string? currency = query.ContainsKey("currency") ? query["currency"].ToString() : null;
     string? sort = query.ContainsKey("sort") ? query["sort"].ToString() : null;
+    string? category = query.ContainsKey("category") ? query["category"].ToString().Trim() : null;
+    string? brand = query.ContainsKey("brand") ? query["brand"].ToString().Trim() : null;
+    if (category is not null && (category.Length == 0 || category.Length > 100) || brand is not null && (brand.Length == 0 || brand.Length > 100))
+        return Results.Problem(statusCode: 400, title: "Invalid category or brand", detail: "category and brand must contain 1-100 characters.");
     decimal? min = null, max = null;
-    foreach (var key in new[] { "search", "currency", "sort", "minPrice", "maxPrice", "page", "pageSize" })
+    foreach (var key in new[] { "search", "currency", "sort", "category", "brand", "minPrice", "maxPrice", "page", "pageSize" })
         if (query[key].Count > 1) return Results.Problem(statusCode: 400, title: "Invalid parameter", detail: key + " must occur once.");
     foreach (var key in new[] { "minPrice", "maxPrice" }) {
         if (!query.ContainsKey(key)) continue;
@@ -41,7 +45,7 @@ app.MapGet("/products", async (HttpContext context, IProductRepository repositor
         (sort is not null && sort is not ("name" or "name-desc" or "price" or "price-desc")) || min > max ||
         (currency is null && (min is not null || max is not null || sort is "price" or "price-desc")))
         return Results.Problem(statusCode: 400, title: "Invalid catalog filters", detail: "search: at most 200 characters; currency: TRY/USD/EUR; sort: name/name-desc/price/price-desc. Price filters and sorting require currency; minPrice must not exceed maxPrice.");
-    return Results.Ok(await repository.ListAsync(page, size, ct, new(search, currency, min, max, sort)));
+    return Results.Ok(await repository.ListAsync(page, size, ct, new(search, currency, min, max, sort, category, brand)));
 });
 app.MapGet("/products/{id}", async (string id, IProductRepository repository, CancellationToken ct) =>
 {

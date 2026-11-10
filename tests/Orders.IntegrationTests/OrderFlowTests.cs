@@ -13,7 +13,7 @@ using Orders.Infrastructure;
 using Xunit;
 public sealed class OrderFlowTests {
  sealed class Catalog : HttpMessageHandler {
-  protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage r, CancellationToken ct) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(new { id = Guid.Parse(r.RequestUri!.Segments.Last()), price = 42.50m, currency = "TRY" }) });
+  protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage r, CancellationToken ct) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(new { id = Guid.Parse(r.RequestUri!.Segments.Last()), name = "Consumer fixture", description = "Catalog compatibility fixture", price = 42.50m, currency = "TRY", category = "Test category", brand = "Test brand", images = new[] { new { url = "https://example.com/fixture.png", alt = "Fixture", position = 0 } }, specifications = new[] { new { name = "Connection", value = "USB" } } }) });
  }
  [Theory]
  [InlineData(5, "Confirmed", 3)]

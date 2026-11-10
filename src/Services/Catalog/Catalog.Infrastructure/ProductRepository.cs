@@ -13,6 +13,8 @@ public sealed class ProductRepository(CatalogDbContext db) : IProductRepository
         if (filter?.Currency is not null) query = query.Where(p => p.Currency == filter.Currency);
         if (filter?.MinPrice is not null) query = query.Where(p => p.Price >= filter.MinPrice);
         if (filter?.MaxPrice is not null) query = query.Where(p => p.Price <= filter.MaxPrice);
+        if (filter?.Category is not null) query = query.Where(p => p.Category != null && p.Category.ToLower() == filter.Category.ToLower());
+        if (filter?.Brand is not null) query = query.Where(p => p.Brand != null && p.Brand.ToLower() == filter.Brand.ToLower());
         var count = await query.LongCountAsync(cancellationToken);
         var ordered = filter?.Sort switch {
             "name" => query.OrderBy(p => p.Name).ThenBy(p => p.Id),

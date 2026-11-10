@@ -4,6 +4,10 @@ ASP.NET Core / EF Core (.NET 10), AngularJS 1.8.3 ile katalog, stok ve sipariş 
 
 ## Yerelde çalıştırma
 
+Bu bilgisayarda `scripts\start-this-pc.cmd` çalıştırın; PostgreSQL kapalıysa açılır, bağlantı otomatik ayarlanır ve mevcut veriler kullanılır. Arayüz: http://localhost:5100/. VS Code başlatma görevi de bu komutu kullanır. Terminali açık tutun. PostgreSQL uygulama kapanınca açık kalır; bilgisayar yeniden başladığında aynı komutla açılır.
+
+pgAdmin sunucu kaydı için Tools > Import/Export Servers ile `deploy/pgadmin-local.json` dosyasını içe aktarın. Elle kayıt: Name `Project1 Local`, Host `127.0.0.1`, Port `55433`, Maintenance database `shopping_verification`, Username `postgres`. Mevcut yerel sunucu parola istemiyor; kimlik doğrulama ayarları değiştirilmedi. Bu başlatıcı ve kayıt bu bilgisayara özeldir.
+
 
 
 Proje kökünde bağlantıları ayarlayıp uygulamayı başlatın:

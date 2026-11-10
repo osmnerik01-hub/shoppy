@@ -16,6 +16,25 @@ $services = @{}
 $stopped = @{}
 $savedEnvironment = @{}
 $controlRegistered = $false
+$logReaders = @{}
+$startupMutex = $null
+$startupLocked = $false
+function Publish-LocalLogs {
+    foreach ($key in $logReaders.Keys) {
+        $log = $logReaders[$key]
+        $buffer = New-Object char[] 8192
+        $count = $log.Reader.Read($buffer, 0, $buffer.Length)
+        if ($count -eq 0) { continue }
+        $lines = ($log.Pending + (-join $buffer[0..($count - 1)])) -split '\r?\n'
+        $log.Pending = $lines[-1]
+        if ($lines.Length -lt 2) { continue }
+        foreach ($line in $lines[0..($lines.Length - 2)]) {
+            if (!$line) { continue }
+            if ($log.Error) { [Console]::Error.WriteLine("[$key] $line") }
+            else { Write-Host "[$key] $line" }
+        }
+    }
+}
 function Set-LocalEnvironment($Name, $Value) {
     if (!$savedEnvironment.ContainsKey($Name)) { $savedEnvironment[$Name] = [Environment]::GetEnvironmentVariable($Name, 'Process') }
     [Environment]::SetEnvironmentVariable($Name, $Value, 'Process')
@@ -27,16 +46,35 @@ function Start-LocalService($Name, $Directory, $Port, $Health = 'ready') {
     $child = Start-Process -FilePath $dotnet -WorkingDirectory $Directory -ArgumentList @("`"$dll`"", '--urls', "http://localhost:$Port") -WindowStyle Hidden -RedirectStandardOutput $outLog -RedirectStandardError $errLog -PassThru
     $script:processes += $child
     $script:services[$Name] = @{ Process = $child; Directory = $Directory; Port = $Port }
+    Write-Host "[$Name] PID $($child.Id) · port $Port · $Directory"
+    foreach ($entry in @(@('stdout',$outLog), @('stderr',$errLog))) {
+        $key = "$Name $($entry[0])"
+        if ($logReaders.ContainsKey($key)) { $logReaders[$key].Reader.Dispose() }
+        $stream = [IO.File]::Open($entry[1], [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        $logReaders[$key] = @{Reader = [IO.StreamReader]::new($stream); Error = $entry[0] -eq 'stderr'; Pending = ''}
+    }
     $deadline = [DateTime]::UtcNow.AddSeconds($StartupTimeoutSeconds)
     do {
-        if ($child.HasExited) { throw "$Name kapandı (kod $($child.ExitCode)). Loglar: $outLog ve $errLog" }
+        Publish-LocalLogs
+        if ($child.HasExited) {
+            $reason = 'Servis baslatma hatasi'
+            if ($Name -eq 'Catalog.Api') {
+                $details = (Get-Content $outLog,$errLog -Raw -ErrorAction SilentlyContinue) -join "`n"
+                $reason = 'TCP kontrolu gecti; veritabani/migration hatasi'
+                if ($details -match '28P01|28000|password authentication failed|no pg_hba') { $reason = 'PostgreSQL kimlik dogrulama hatasi (TCP kontrolu gecti)' }
+                elseif ($details -match '42501|permission denied') { $reason = 'PostgreSQL yetki/migration hatasi (TCP kontrolu gecti)' }
+            }
+            $target = if ($Name -eq 'Catalog.Api') { " PostgreSQL hedefi: $safeHost`:$pgPort." } else { '' }
+            throw "$Name kapandi (kod $($child.ExitCode)). $reason.$target Loglar: $outLog ve $errLog"
+        }
         try {
             $response = Invoke-WebRequest "http://localhost:$Port/health/$Health" -UseBasicParsing -TimeoutSec 4
             if ($response.StatusCode -eq 200) { Write-Host "$Name hazır: http://localhost:$Port"; return }
         } catch { }
         Start-Sleep -Milliseconds 500
     } while ([DateTime]::UtcNow -lt $deadline)
-    throw "$Name hazir olmadi. Veritabani baglantisini ve servis loglarini kontrol edin: $outLog ve $errLog"
+    $target = if ($Name -eq 'Catalog.Api') { " PostgreSQL hedefi: $safeHost`:$pgPort (ilk TCP kontrolu gecti; readiness/veritabani/migration kontrolu tamamlanamadi)." } else { '' }
+    throw "$Name hazir olmadi.$target Servis loglarini kontrol edin: $outLog ve $errLog"
 }
 Push-Location $root
 try {
@@ -57,30 +95,50 @@ try {
     $pgHost = 'localhost'
     foreach ($key in @('Host','Server')) { if ($pg.ContainsKey($key)) { $pgHost = [string]$pg[$key]; break } }
     $pgPort = 5432
-    if ($pg.ContainsKey('Port')) { $pgPort = [int]$pg['Port'] }
+    if ($pg.ContainsKey('Port')) {
+        if (![int]::TryParse([string]$pg['Port'], [ref]$pgPort) -or $pgPort -lt 1 -or $pgPort -gt 65535) {
+            throw 'ConnectionStrings__Catalog Port degeri 1-65535 arasinda bir tamsayi olmalidir.'
+        }
+    }
+    $safeHost = $pgHost -replace '[^a-zA-Z0-9.:_-]', '?'
+    Write-Host "PostgreSQL TCP hedefi: $safeHost`:$pgPort"
     foreach ($dependency in @(,@('PostgreSQL', $pgHost, $pgPort))) {
         $tcp = New-Object System.Net.Sockets.TcpClient
         try {
             $task = $tcp.ConnectAsync([string]$dependency[1], [int]$dependency[2])
             if (!$task.Wait(3000) -or !$tcp.Connected) { throw 'unreachable' }
-        } catch { throw "$($dependency[0]) erişilemiyor. Windows servisini, bağlantı adresini ve portunu kontrol edin." }
+        } catch { throw "PostgreSQL TCP erisilemiyor ($safeHost`:$pgPort). Windows servisini veya yerel pg_ctl ornegini, adresi ve portu kontrol edin." }
         finally { $tcp.Dispose() }
-    }
-    # Release the previous controlled run's DLLs before any build begins.
-    if ($ControlDirectory -and (Test-Path (Join-Path $ControlDirectory 'ready'))) {
-        Write-Host "Aynı kontrol dizinindeki mevcut kontrollü oturum kapatılıp yeniden başlatılacak: $ControlDirectory"
-        & "$PSScriptRoot/control-local.ps1" -Action shutdown -ControlDirectory $ControlDirectory
     }
     $ports = @($GatewayPort, $CatalogPort, $InventoryPort, $OrdersPort)
     if (@($ports | Select-Object -Unique).Count -ne 4) { throw 'Uygulama portları birbirinden farklı olmalıdır.' }
+    if ($ControlDirectory) {
+        $ControlDirectory = [IO.Path]::GetFullPath($ControlDirectory)
+        $hash = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($ControlDirectory.ToLowerInvariant()))).Replace('-','')
+        $startupMutex = [Threading.Mutex]::new($false, "Local\Project1-$hash")
+        try { $startupLocked = $startupMutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $startupLocked = $true }
+        if (!$startupLocked) { throw 'Bu kontrol dizininde başka bir başlatma devam ediyor.' }
+        if (@('ready','owner.json','request.json') | Where-Object { Test-Path -LiteralPath (Join-Path $ControlDirectory $_) }) {
+            & "$PSScriptRoot/control-local.ps1" -Action shutdown -ControlDirectory $ControlDirectory -ClearStale -Ports $ports
+        }
+    }
     foreach ($port in $ports) {
         if (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) { throw "Port kullanımda: $port. İlgisiz süreçleri kapatmayın; boş bir port seçin veya mevcut kontrollü oturumun ControlDirectory değerini kullanın." }
     }
     if ($UseExistingData) {
         foreach ($entry in @(@('Inventory','inventory.db'), @('Orders','orders.db'))) {
-            $path = Join-Path $root ("artifacts/revision-data/" + $entry[1])
-            if (!(Test-Path -LiteralPath $path -PathType Leaf)) { throw "Mevcut veritabanı dosyası bulunamadı; doğru veri yolunu geri yükleyin: $path" }
-            Set-LocalEnvironment ("ConnectionStrings__" + $entry[0]) "Data Source=$path;Mode=ReadWrite;Default Timeout=30"
+            $variable = "ConnectionStrings__" + $entry[0]
+            $connection = [Environment]::GetEnvironmentVariable($variable, 'Process')
+            if (!$connection) { $connection = "Data Source=$(Join-Path $root ('artifacts/revision-data/' + $entry[1]))" }
+            $sqlite = New-Object System.Data.Common.DbConnectionStringBuilder
+            try { $sqlite.set_ConnectionString($connection) } catch { throw "$variable gecerli SQLite baglantisi olmalidir." }
+            $path = [string]$sqlite['Data Source']
+            if (!$path) { throw "$variable icin Data Source dosya yolu gereklidir." }
+            if (![IO.Path]::IsPathRooted($path)) { $path = Join-Path $root $path }
+            if (!(Test-Path -LiteralPath $path -PathType Leaf)) { throw "Mevcut veritabani dosyasi bulunamadi; dogru veri yolunu geri yukleyin: $path" }
+            $sqlite['Data Source'] = $path
+            $sqlite['Mode'] = 'ReadWrite'
+            Set-LocalEnvironment $variable $sqlite.get_ConnectionString()
         }
         Set-LocalEnvironment 'Inventory__SeedDemo' 'false'
     }
@@ -103,7 +161,9 @@ try {
         & npm.cmd run build
         if ($LASTEXITCODE -ne 0) { throw 'Web derlemesi başarısız.' }
     } finally { Pop-Location }
-    & $dotnet build Project1.sln --nologo
+    Set-LocalEnvironment 'MSBUILDDISABLENODEREUSE' '1'
+    Set-LocalEnvironment 'DOTNET_CLI_USE_MSBUILD_SERVER' '0'
+    & $dotnet build Project1.sln --nologo --disable-build-servers -p:UseSharedCompilation=false
     if ($LASTEXITCODE -ne 0) { throw 'Derleme başarısız.' }
     Start-LocalService 'Catalog.Api' (Join-Path $root 'src/Services/Catalog/Catalog.Api') $CatalogPort
     Start-LocalService 'Inventory.Api' (Join-Path $root 'src/Services/Inventory/Inventory.Api') $InventoryPort
@@ -121,11 +181,15 @@ try {
     if ($ControlDirectory) {
         $ControlDirectory = [IO.Path]::GetFullPath($ControlDirectory)
         New-Item -ItemType Directory -Force $ControlDirectory | Out-Null
+        @{pid=$PID; started=(Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks.ToString()} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $ControlDirectory 'owner.json')
         Set-Content (Join-Path $ControlDirectory 'ready') $PID
         $controlRegistered = $true
+        $startupMutex.ReleaseMutex()
+        $startupLocked = $false
     }
     if (!$StopAfterReady) {
         while ($true) {
+            Publish-LocalLogs
             if ($ControlDirectory -and (Test-Path (Join-Path $ControlDirectory 'request.json'))) {
                 $request = Get-Content (Join-Path $ControlDirectory 'request.json') -Raw | ConvertFrom-Json
                 Remove-Item -LiteralPath (Join-Path $ControlDirectory 'request.json')
@@ -157,7 +221,10 @@ try {
         }
         $child.Dispose()
     }
-    if ($controlRegistered) { Remove-Item -LiteralPath (Join-Path $ControlDirectory 'ready') -ErrorAction SilentlyContinue }
+    foreach ($log in $logReaders.Values) { $log.Reader.Dispose() }
+    if ($controlRegistered) { foreach ($name in @('ready','owner.json')) { Remove-Item -LiteralPath (Join-Path $ControlDirectory $name) -ErrorAction SilentlyContinue } }
+    if ($startupLocked) { $startupMutex.ReleaseMutex() }
+    if ($startupMutex) { $startupMutex.Dispose() }
     foreach ($name in $savedEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process') }
     Pop-Location
 }

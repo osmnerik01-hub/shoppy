@@ -164,3 +164,104 @@ These results apply to this stage, separately from historical records above.
 - Web build passed. Normal API build was blocked by existing DLL locks; isolated artifact output compiled successfully. Initial system readiness attempts failed because default ports/connection were absent; final run used explicit ports and an isolated database. Background launch/cleanup command was rejected by automatic approval review without a detailed reason; foreground tool sessions provided the successful run.
 
 Screenshots: `artifacts/system-results`; API TRX: `tests/Catalog.IntegrationTests/TestResults` (2026-11-04 22:40:34). Existing application data was retained; the real system test consumes one unit of the seeded product as asserted by the test.
+
+## 2026-11-10 — Sepet, favoriler ve yenileme sonrası sipariş devamı
+
+Bu aşama mevcut katalog tasarımını koruyarak favori, sepet ve sonuç ekranlarını tamamlar; backend teknolojileri ve servis sözleşmeleri değişmedi. Web kaynakları ve Gateway `wwwroot` çıktıları eşitlendi.
+
+- `npm test`: 10 birim/sözleşme testi geçti (masaüstü ve mobil).
+- `npm run test:e2e`: fiyat değişikliği, ürün kaldırılması, yerel depolama engeli, favori/sepet kalıcılığı, adetler, ayrı para birimi özetleri, yanıt kaybı, alınmış sipariş kimliği ve kısmi sonuçları kapsar. Son çalıştırmanın sayısı aşağıda kaydedilmiştir.
+- `npm run build` / `node src/Web/build.cjs`: başarılı. Gateway'e kopyalanan app.js/index.html dosyalarının kaynakla SHA256 eşitliği kontrol edildi.
+- Yerel başlatıcının çözüm derlemesi: başarılı, 0 uyarı / 0 hata.
+- `npx playwright test --config playwright.system.config.cjs`: **3 test geçti, 48.3 saniye**. Gerçek POST yanıtı sunucudan alındıktan sonra tarayıcıya iletilmeden kesildi; yenilemede aynı anahtar tekrarlandı ve aynı sipariş kimliği döndü. İkinci yenilemede yeni POST oluşmadı. Stok quantity ve available değerleri yalnızca bir azaldı; gecikmeli kontrolde aynı kaldı. Normal Confirmed, yetersiz stokta Rejected ve Inventory kesintisinde Pending/Orders yeniden başlatma/servis toparlanması da geçti.
+
+Gerçek servis kanıtları: [JUnit](../artifacts/system.xml), [HTML raporu](../artifacts/system-report/index.html), [ekran görüntüleri](../artifacts/system-results). `persistence-real-response-loss-refresh-and-one-stock-effect` altında cart-desktop/cart-mobile/result-desktop/result-mobile görüntüleri vardır.
+
+Yapılandırılmış görsel kontrol 1440×900 ve 390×844 üzerinde ana sayfa → kategori/arama → detay → sepet → sonuç akışını kapsar. Sepette ürün görseli ve para birimi özeti, sonuçta durum kartı görünürlüğü ve yatay taşma otomatik denetlendi. Her iki boyutta sepet ve sonuç ekran görüntüleri ayrıca açılarak incelendi; kırpılmış kontrol veya yatay taşma görülmedi. Bunlar ekran görüntüsü ve yerleşim kontrolleridir; piksel bazlı baseline karşılaştırması değildir.
+
+İlk gerçek servis denemesinde tarihsel 55432 PostgreSQL adresi erişilemiyordu. Projedeki `artifacts/catalog-enrichment/postgres` yerel örneği 55433 üzerinde başlatıldı. Yeni `shopping_verification` PostgreSQL veritabanı, `artifacts/shopping-system/inventory.db` ve `orders.db` ile ayrılmış gerçek servis verileri kullanıldı; mevcut kullanıcı verileri silinmedi veya sıfırlanmadı. Testler gerçek test stoklarını tüketti. Kontrol dizini `artifacts/local/shopping-system-control`; servis logları `artifacts/local/logs/47b1df6bf45c4b969584330651061496` altındadır.
+
+Depolama kullanılamadığında sayfa belleğinde devam edilir ve yenileme garantisinin olmadığı arayüzde açıkça bildirilir. Sepet tek işlem değildir; her satırın sonucu ayrı korunur. Aynı origin altında yenileme desteklenir; sekmeler arası eşzamanlı düzenleme ve tarayıcılar arası eşitleme bu aşamanın kapsamı değildir.
+
+Son Web tekrarı: **10 birim/sözleşme testi (11.2 sn)** ve **28 masaüstü/mobil E2E testi (29.0 sn)** geçti. Bu tekrar, sepet kontrolünden sonra kaldırılan ürüne POST 404 dönmesinin ürün bazında kesin hata olarak gösterilmesini ve yenileme sonrasında korunmasını da kapsar. Tamamlanan satırlar yeniden gönderilmez; bu durumda Yeni alışveriş kullanılabilir. Son Web build başarılıdır.
+
+Test sonunda `control-local.ps1 -Action shutdown -ControlDirectory artifacts/local/shopping-system-control` komutu **Shutdown verified: 4 application processes exited.** döndürdü. Bu çalışma için başlatılan yerel PostgreSQL örneği de kontrollü kapatıldı. Ayrılmış test verileri ve raporlar inceleme için korundu. Önceki kullanıcı uygulama oturumlarına müdahale edilmedi.
+
+## 2026-11-10 — PostgreSQL baglantisi ve VS Code baslaticisi
+
+Bu asama yalnizca yerel baslatma sorununu ele alir. Once salt okunur kontroller yapildi: global.json ile SDK 10.0.403 uyumlu; Node 24.14.1/npm 11.12.1 erisilebilir. PostgreSQL Windows servisi, PostgreSQL sureci ve 5432/55432/55433 dinleyicisi yoktu. ConnectionStrings__Catalog Process/User/Machine kapsamlarinda ayarsizdi. Mevcut PostgreSQL 18 veri dizininin postmaster.opts dosyasi 127.0.0.1:55433 gosteriyordu. Mevcut ornek pg_ctl ile baslatildi; postgres ve shopping_verification veritabanlari salt okunur sorguyla goruldu. Yeni veritabani veya kullanici olusturulmadi.
+
+Eski 55432/project1_revision varsayimi kaldirildi. Verilen Catalog baglantisi korunur; yoksa acik ayar yonlendirmesi gelir. TCP hatasi guvenli host/port gosterir. TCP sonrasi Catalog kapanisinda kimlik dogrulama ve yetki kodlari ayrilir; diger veritabani/migration hatalari log yoluyla bildirilir. Tam baglanti/parola yazdirilmaz. Mevcut SQLite Data Source ayarlari korunur ve ReadWrite zorunludur. VS Code gorevi ve terminal ayni CMD baslaticiyi kullanir; kalici politika degistirilmedi.
+
+Proje kokunde kullanilan komut:
+
+```powershell
+$env:ConnectionStrings__Catalog = 'Host=127.0.0.1;Port=55433;Database=shopping_verification;Username=postgres;Timeout=5'
+.\scripts\start-existing-local.cmd -ControlDirectory "artifacts/local/connection-control"
+```
+
+- Gercek CMD baslatici Web ve cozum derlemesini tamamladi: 0 uyari/0 hata.
+- Dort /health/ready HTTP 200; Gateway / HTTP 200 text/html; /api/products HTTP 200 application/json, JSON parse basarili. Kanit: artifacts/local/connection-http.json.
+- scripts/test-local-launcher.ps1: eksik baglanti, erisilemeyen PostgreSQL (hata metninde hedef adres/port), dolu port ve eksik mevcut SQLite dosyasi kontrollerinin tamami PASS. Deneme parolasi ciktiya sizmadi. Dolu porttaki test dinleyicisi korunarak kontrol edildi. Kayit: artifacts/local/connection-failure-checks.log. Testleri uygulama portlari bosken calistirin.
+- Bosluklu artifacts/local/connection launcher checks yoluna kopyalanan gercek baslaticilar farkli calisma dizininden cagrildi; eksik baglanti hatasi ve hata cikis kodu dogrulandi. PowerShell sozdizimi kontrolleri gecti.
+- Sistem testlerinin kullandigi control-local.ps1 restart inventory,orders cagrisi gecti; ardindan dort readiness yeniden 200. Mevcut shop.spec.cjs, LOCAL_CONTROL_DIRECTORY ve varsayilan port tuketimi degistirilmedi. Siparis/stok tuketen tam sistem test paketi bu baslatma asamasinda tekrarlanmadi.
+- Kontrol kanali shutdown iki kez `Shutdown verified: 4 application processes exited.` verdi; ilk kapanistan sonra uygulama portlarinda dinleyici olmadigi kontrol edildi. Sonrasinda ayni komutla tekrar baslatildi.
+
+Son durumda uygulama http://localhost:5100/ adresinde acik birakildi; kontrol dizini artifacts/local/connection-control. Baslatma kayitlari bu dizindeki launcher.out.log ve launcher.err.log dosyalarindadir. Kapatma:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/control-local.ps1 -Action shutdown -ControlDirectory "artifacts/local/connection-control"
+```
+
+Mevcut revision-data SQLite dosyalari ve PostgreSQL veri dizini silinmedi/sifirlanmadi. Ilgisiz surecler durdurulmadi. PostgreSQL yerel ornegi uygulamanin yeniden acilabilmesi icin calisir birakildi. npm mevcut AngularJS kullanim omru ve iki guvenlik bulgusu (1 moderate, 1 high) bildirdi; bagimlilik surumleri degistirilmedi.
+
+### 2026-11-10 — Güncel bağlantı ve başlatıcı tekrar kontrolü
+
+Salt okunur incelemede SDK 10.0.403, Node 24.14.1, npm.cmd 11.12.1 doğrulandı. Windows PostgreSQL servisi yok; mevcut pg_ctl örneği 127.0.0.1:55433 üzerinde çalışıyor. psql salt okunur sorgusu shopping_verification veritabanını ve gerçek sunucu adres/portunu doğruladı. Catalog ortam değişkeni Process/User/Machine kapsamında ayarsızdı; hiçbir kalıcı ortam ayarı veya yürütme politikası değiştirilmedi. Düz npm komutu Restricted politikaya takılıyor; başlatıcı npm.cmd kullanıyor.
+
+Mevcut düzeltmeler korundu. Catalog süreç hatasına güvenli hedef adres/port eklendi; VS Code görevinin kontrol dizini terminal komutuyla eşitlendi. Yerel kılavuzdaki çelişkili SQLite varsayılanı ve doğrudan PS1 başlatma örnekleri düzeltildi.
+
+Kullanılan komut (proje kökünde):
+
+```powershell
+$env:ConnectionStrings__Catalog = 'Host=127.0.0.1;Port=55433;Database=shopping_verification;Username=postgres;Timeout=5'
+.\scripts\start-existing-local.cmd -ControlDirectory "artifacts/local/connection-control"
+```
+
+Mevcut kontrollü oturum shutdown ile kapatıldı: `Shutdown verified: 4 application processes exited.` Ardından gerçek CMD başlatıcı yeniden çalıştırıldı; Web ve çözüm derlemesi başarılı, 0 uyarı/0 hata. Güncel başlatma kayıtları: artifacts/local/connection-control/recheck.out.log ve recheck.err.log.
+
+- test-local-launcher.ps1: eksik bağlantı, erişilemeyen PostgreSQL, dolu port ve eksik mevcut veri dosyası kontrolleri PASS; deneme parolası çıktıya sızmadı, ilgisiz dinleyici korundu.
+- Gerçek başlatıcıların boşluk içeren kopyası farklı çalışma dizininden çağrıldı; eksik bağlantı hatası ve başarısız çıkış kodu doğrulandı.
+- Dört ilgili PS1 sözdizimi ve VS Code görev JSON kontrolü geçti.
+- Sistem testindeki kontrol tüketimiyle aynı `restart -Services inventory,orders` çağrısı başarılı. Sonrasında dört readiness HTTP 200, Gateway / HTTP 200 text/html ve /api/products HTTP 200 application/json; JSON ayrıştırması başarılı. Kanıt: artifacts/local/connection-recheck-http.json.
+
+Tam sipariş/stok test paketi bu başlatıcı aşamasında tekrarlanmadı. SQLite dosyaları ve PostgreSQL verileri silinmedi veya sıfırlanmadı; ilgisiz süreçler kapatılmadı. Uygulama http://localhost:5100/ adresinde çalışır bırakıldı. Kontrol dizini artifacts/local/connection-control; kılavuzdaki shutdown komutu bu oturumu kapatır. npm mevcut bağımlılık uyarılarını bildirdi; bağımlılık sürümleri değiştirilmedi.
+## 2026-11-10 — Son başlatıcı kabul kontrolü
+
+Bu kontrolde önce salt okunur SDK/Node/npm, Windows servisi, dinleyici ve veri dosyası incelemesi yapıldı. SDK 10.0.403, Node 24.14.1, npm.cmd 11.12.1; PostgreSQL Windows servisi yok. Çalışan yerel PostgreSQL örneği SQL `current_database(), inet_server_addr(), inet_server_port()` sorgusuyla `shopping_verification`, `127.0.0.1:55433` olarak doğrulandı. 55432 varsayılmadı. Kalıcı ortam veya yürütme politikası değiştirilmedi.
+
+Önceki uygulama kendi kontrol kanalından kapatıldı: `Shutdown verified: 4 application processes exited.` Gerçek CMD başlatıcısı aşağıdaki bağlantı ve komutla yeniden açıldı:
+
+```powershell
+$env:ConnectionStrings__Catalog = 'Host=127.0.0.1;Port=55433;Database=shopping_verification;Username=postgres;Timeout=5'
+.\scripts\start-existing-local.cmd -ControlDirectory "artifacts/local/connection-control"
+```
+
+Web ve çözüm derlemesi başarılı (0 uyarı, 0 hata). Sistem testinin kullandığı `restart -Services inventory,orders` kontrol çağrısı başarılı. Ardından dört servisin readiness uçları HTTP 200; Gateway `/` HTTP 200 text/html, `/api/products` HTTP 200 application/json ve JSON ayrıştırması başarılı. Kanıt: [HTTP sonuçları](../artifacts/local/connection-acceptance-http.json). Başlatma kayıtları: `artifacts/local/connection-control/acceptance.out.log` ve `acceptance.err.log`.
+
+`test-local-launcher.ps1`: eksik bağlantı, erişilemeyen PostgreSQL, geçersiz port, dolu uygulama portu ve eksik mevcut SQLite dosyası PASS. Deneme parolası çıktıda görülmedi; dolu porttaki ilgisiz dinleyici korundu. Gerçek başlatıcıların boşluklu yoldaki kopyası farklı çalışma dizininden çağrıldı; beklenen eksik bağlantı hatası ve başarısız çıkış kodu doğrulandı. Dört ilgili PS1 sözdizimi ve VS Code görev JSON kontrolü geçti. Catalog readiness zaman aşımı da artık güvenli hedef adres/port ve ilk TCP kontrolünün geçtiği bilgisini verir; bu zaman aşımı dalı kaynak incelemesiyle kontrol edildi.
+
+Uygulama **http://localhost:5100/** üzerinde çalışır bırakıldı. Kapatma:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/control-local.ps1 -Action shutdown -ControlDirectory "artifacts/local/connection-control"
+```
+
+Mevcut SQLite/PostgreSQL verileri silinmedi veya sıfırlanmadı. Sipariş/stok tüketen tam sistem paketi bu başlatıcı aşamasında yeniden çalıştırılmadı; kontrol kanalı uyumu gerçek servislerle denetlendi. npm mevcut bağımlılık uyarılarını bildirdi; bağımlılık sürümleri değiştirilmedi.
+
+
+### Başarılı yerel başlatma kaydının korunması — 2026-11-10
+
+Bu aşamada mevcut başlatıcılar, VS Code görevi, yukarıdaki son kabul kaydı ve connection-acceptance-http.json salt okunur incelendi. Kanıt dosyasında Gateway/Catalog/Inventory/Orders readiness yanıtlarının dördü de 200; Gateway HTML ve ürün JSON yanıtları da 200 olarak kayıtlıdır. Bunlar mevcut kabul sonuçlarıdır, yeni bir çalışma sonucu değildir.
+
+Catalog bağlantısı mevcut komutta açıkça 127.0.0.1:55433 olarak ayarlanır; başlatıcı bağlantı eksikse durur, tarihsel 55432 profilini otomatik kullanmaz. Mevcut CMD komutu ve veri koruma davranışı korundu; yeni geliştirme gerekmedi. Yalnızca kullanım kılavuzuna mevcut komut ve kabul kaydı yönlendirmesi eklendi. Başlatma, derleme, test ve görsel kontroller tekrarlanmadı; PostgreSQL/SQLite verilerine veya çalışan süreçlere müdahale edilmedi.

@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Catalog API",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Read-only catalog. Products are validated by the domain and PostgreSQL constraints. Supported currencies: TRY, USD, EUR."
   },
   "paths": {
@@ -83,6 +83,26 @@
                 "price-desc"
               ]
             }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "description": "Trimmed, case-insensitive exact match; combined with all other filters."
+          },
+          {
+            "name": "brand",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "description": "Trimmed, case-insensitive exact match; combined with all other filters."
           }
         ],
         "description": "Filters precede pagination; totalCount is filtered. Default id order; other orders break ties by id. Price filters/sorts require currency. minPrice <= maxPrice. Literal case-insensitive name/description search (max 200 characters).",
@@ -187,7 +207,11 @@
           "name",
           "description",
           "price",
-          "currency"
+          "currency",
+          "category",
+          "brand",
+          "images",
+          "specifications"
         ],
         "properties": {
           "id": {
@@ -218,6 +242,34 @@
               "USD",
               "EUR"
             ]
+          },
+          "category": {
+            "type": "string",
+            "nullable": true,
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "brand": {
+            "type": "string",
+            "nullable": true,
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "images": {
+            "type": "array",
+            "maxItems": 20,
+            "description": "Ascending unique position; empty for products without images.",
+            "items": {
+              "$ref": "#/components/schemas/ProductImage"
+            }
+          },
+          "specifications": {
+            "type": "array",
+            "maxItems": 100,
+            "description": "Unique names, case-insensitive.",
+            "items": {
+              "$ref": "#/components/schemas/ProductSpecification"
+            }
           }
         }
       },
@@ -269,6 +321,50 @@
           },
           "instance": {
             "type": "string"
+          }
+        }
+      },
+      "ProductImage": {
+        "type": "object",
+        "required": [
+          "url",
+          "alt",
+          "position"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https://",
+            "maxLength": 2048
+          },
+          "alt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "position": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "ProductSpecification": {
+        "type": "object",
+        "required": [
+          "name",
+          "value"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "value": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
           }
         }
       }

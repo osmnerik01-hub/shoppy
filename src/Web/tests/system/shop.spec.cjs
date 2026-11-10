@@ -26,7 +26,7 @@ test('gerçek arayüz: onay, stok düşümü ve yetersiz stok',async({page,reque
  await page.screenshot({path:info.outputPath('confirmed-desktop.png'),fullPage:true});
  await page.getByRole('button',{name:'Yeni alışveriş'}).click();
  await card.getByRole('button',{name:'Ürünü incele'}).click();await page.getByRole('button',{name:'Sepete ekle'}).click();await page.getByRole('button',{name:'Sepet (1)',exact:true}).click();
- await page.getByLabel('Adet').fill(String(before.quantity+1));await page.getByRole('button',{name:'Sipariş ver',exact:true}).click();
+ await page.getByLabel('Adet',{exact:true}).fill(String(before.quantity+1));await page.getByRole('button',{name:'Sipariş ver',exact:true}).click();
  await expect(page.getByText('Stok yetersiz veya rezervasyon reddedildi. Sipariş oluşturulamadı.',{exact:true})).toBeVisible({timeout:60000});
  expect((await stock(request)).quantity).toBe(before.quantity-1);
  await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
